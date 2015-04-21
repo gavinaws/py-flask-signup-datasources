@@ -28,6 +28,8 @@ from boto import sns
 from flask import Flask, jsonify
 from flask.ext.sqlalchemy import SQLAlchemy
 
+from functools import wraps
+
 
 # Default config vals
 THEME = 'default' if os.environ.get('THEME') is None else os.environ.get('THEME')
@@ -61,6 +63,7 @@ class User(db.Model):
     name = db.Column(db.String(255))
     theme = db.Column(db.String(30))
     previewAccess = db.Column(db.String(10))
+    age = db.Column(db.Integer)
 
 # Connect to DynamoDB and get ref to Table
 #ddb_conn = dynamodb2.connect_to_region(application.config['AWS_REGION'])
@@ -107,6 +110,36 @@ def publish_to_sns(signup_data):
         sns_conn.publish(application.config['NEW_SIGNUP_TOPIC'], json.dumps(signup_data), "New signup: %s" % signup_data['email'])
     except Exception as ex:
         sys.stderr.write("Error publishing subscription message to SNS: %s" % ex.message)
+
+
+def check_auth(username, password):
+    """This function is called to check if a username /
+    password combination is valid.
+    """
+    return username == 'admin' and password == 'secret'
+
+def authenticate():
+    """Sends a 401 response that enables basic auth"""
+    return Response(
+    'Could not verify your access level for that URL.\n'
+    'You have to login with proper credentials', 401,
+    {'WWW-Authenticate': 'Basic realm="Login Required"'})
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        return f(*args, **kwargs)
+    return decorated
+
+@application.route('/users')
+@requires_auth
+def show_users():
+    entries = User.query.all()
+    theme = application.config['THEME']
+    return flask.render_template('users.html', theme=theme, title='A New Startup - Registered Users', entries=entries)
 
 
 @application.errorhandler(404)
